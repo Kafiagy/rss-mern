@@ -1,0 +1,72 @@
+import requests
+from bs4 import BeautifulSoup
+from feedgen.feed import FeedGenerator
+from datetime import datetime
+import re
+
+SITE = "https://www.mern.dj"
+
+def extract_date_from_article(url):
+    try:
+        res = requests.get(url, timeout=10)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        # Cherche un format de date (par ex: "27 Août 2025") dans la page
+        text = soup.get_text()
+        match = re.search(r'\b(\d{1,2})\s+(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+(\d{4})', text, re.IGNORECASE)
+        if match:
+            day, month_str, year = match.groups()
+            months = {
+                "janvier": 1, "février": 2, "mars": 3, "avril": 4, "mai": 5,
+                "juin": 6, "juillet": 7, "août": 8, "septembre": 9,
+                "octobre": 10, "novembre": 11, "décembre": 12
+            }
+            month = months[month_str.lower()]
+            return datetime(int(year), month, int(day))
+    except Exception:
+        pass
+    return None
+
+def fetch_articles():
+    res = requests.get(SITE, timeout=15)
+    res.raise_for_status()
+    soup = BeautifulSoup(res.text, "html.parser")
+
+    fg = FeedGenerator()
+    fg.id(SITE)
+    fg.title("Actualités - MERN Djibouti")
+    fg.link(href=SITE, rel='alternate')
+    fg.description("Flux RSS automatique du site du Ministère de l'Énergie (MERN)")
+
+    # Chaque article est un titre <h3> suivi d’un lien "lire la suite" ou "learn more"
+    titles = soup.find_all("h3")
+
+    for h in titles:
+        link_tag = h.find_next("a", string=lambda s: s and ("lire la suite" in s.lower() or "learn more" in s.lower()))
+        if not link_tag:
+            continue
+
+        title = h.get_text(strip=True)
+        link = link_tag.get("href")
+        if link.startswith("/"):
+            link = SITE + link
+
+        summary_tag = h.find_next_sibling("p")
+        summary = summary_tag.get_text(strip=True) if summary_tag else ""
+
+        pub_date = extract_date_from_article(link)
+
+        entry = fg.add_entry()
+        entry.id(link)
+        entry.title(title)
+        entry.link(href=link)
+        entry.description(summary)
+        if pub_date:
+            entry.pubDate(pub_date)
+
+    fg.rss_file("feed.xml")
+    print("✅ Flux RSS généré avec date : feed.xml")
+
+if __name__ == "__main__":
+    fetch_articles()
